@@ -1,61 +1,35 @@
-# Distributed Rate Limiter (Go)
+# Distributed Rate Limiter
 
-A direct Go port of the [Node.js distributed rate limiter](../distributed-rate-limiter) --
-same architecture, same two algorithms (token bucket + sliding window),
-same atomic Redis Lua scripts, same multi-instance Docker Compose proof.
-This version exists to demonstrate the same concepts in a language more
-commonly used for infra/systems tooling in production.
-
-## What's identical to the Node version
-
-- The **Lua scripts themselves** are byte-for-byte the same logic --
-  algorithm correctness doesn't change based on host language.
-- The **atomicity story**: the whole read-modify-write cycle still runs
-  as one uninterruptible operation inside Redis, for the same race-
-  condition reasons explained in the Node version's docs.
-- The **multi-instance proof**: `docker compose up --build` starts two
-  independent server processes sharing one Redis, exactly like the Node
-  version, to prove cross-instance correctness.
-
-## What's different (and why)
-
-| | Node version | Go version |
-|---|---|---|
-| HTTP framework | Express | standard library `net/http` |
-| Redis client | `ioredis` | `go-redis/v9` |
-| Script execution | manual `SCRIPT LOAD` / `EVALSHA` + NOSCRIPT retry | `redis.NewScript(...).Run(...)` handles EVALSHA/EVAL fallback automatically |
-| Middleware shape | `(req, res, next) => {}` | `func(http.Handler) http.Handler` -- functions wrapping handlers |
-| Tests | `node:test` | Go's built-in `testing` package |
-| Load test | `autocannon` (npm package) | hand-rolled with goroutines + a `sync.WaitGroup` (see `loadtest/main.go`) -- a good opportunity to talk through Go's concurrency primitives in an interview alongside the Redis-side atomicity |
-| Concurrency model | single-threaded event loop, async I/O | real OS threads via goroutines, explicit `sync`/`atomic` where shared state is touched |
-
-That concurrency-model difference is worth understanding for interviews:
-Node handles many simultaneous requests on one thread via its event
-loop -- there's never *within-process* concurrent execution of your JS,
-so the only race condition that matters is the *distributed* one across
-separate processes (which is what the Lua script fixes). Go's goroutines
-genuinely run concurrently, so a Go rate limiter has to be race-safe both
-**within** a single process (which `go-redis`'s client handles safely
-under the hood, and our own code doesn't touch any shared mutable state
-outside of Redis) and **across** processes (same Lua-script fix as
-before). Being able to articulate that distinction is a good sign of
-understanding, not just memorized code.
+A distributed rate limiter implemented in Go with Redis-backed token bucket
+and sliding-window algorithms. Atomic Redis Lua scripts keep rate-limit
+decisions consistent across multiple Go server instances.
 
 ## Project structure
 
 ```
-cmd/server/main.go              # entrypoint, wires routes + middleware (~ src/server.js)
-internal/redisclient/           # shared Redis client (~ src/redisClient.js)
+cmd/server/main.go              # HTTP server entrypoint and routes
+cmd/server/metrics.go           # per-instance request metrics
+internal/redisclient/           # shared Redis client
 internal/limiter/
-  tokenbucket.go                 # ~ src/limiters/tokenBucket.js
-  slidingwindow.go               # ~ src/limiters/slidingWindow.js
-  limiter_test.go                # ~ test/limiters.test.js
-internal/middleware/ratelimit.go # ~ src/middleware/rateLimit.js
-loadtest/main.go                # ~ load-test/run.js
-docker-compose.yml               # Redis + 2 app instances, same as Node version
+  tokenbucket.go                 # token bucket algorithm
+  slidingwindow.go               # sliding-window algorithm
+  limiter_test.go                # Redis-backed integration tests
+internal/middleware/ratelimit.go # HTTP rate-limit middleware
+loadtest/main.go                 # concurrent load-test client
+docker-compose.yml               # Redis, Go instances, Nginx, and dashboard
 dashboard/                       # React + Vite live RateForge dashboard
 .github/workflows/ci.yml         # Go checks and dashboard build
 ```
+
+## Rate-limiting algorithms
+
+- **Token bucket (`/api/bursty`)** — capacity of 20 requests, refilling at
+  5 requests per second. Allows short bursts while limiting sustained traffic.
+- **Sliding window (`/api/strict`)** — allows 10 requests in each 10-second
+  window.
+
+Both algorithms use atomic Redis Lua scripts, so concurrent requests handled
+by separate Go instances share the same rate-limit state.
 
 ## Running it
 
@@ -141,13 +115,3 @@ To create a production frontend bundle, run `npm run build` from `dashboard`.
 
 GitHub Actions runs Go formatting checks, tests and vet, then installs and
 builds the React dashboard on pushes and pull requests.
-
-## A note on module fetching in restricted network environments
-
-This project was originally built in a sandboxed environment without
-access to the public Go module proxy (`proxy.golang.org`). If you hit
-similar restrictions, `GOPROXY=direct GOSUMDB=off go get <module>` fetches
-directly from the module's source repo (e.g. GitHub) via Git instead of
-going through the proxy/checksum-database layer. In a normal development
-environment with full internet access, you don't need either of those
-env vars -- the default `GOPROXY` setup just works.
