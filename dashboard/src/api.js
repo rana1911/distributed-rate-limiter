@@ -1,12 +1,12 @@
 export const METRICS_URLS = (
   import.meta.env.VITE_METRICS_URLS ??
-  "http://localhost:3001/metrics,http://localhost:3002/metrics"
+  "https://rateforge.duckdns.org/metrics/app1,https://rateforge.duckdns.org/metrics/app2"
 )
   .split(",")
   .map((url) => url.trim())
   .filter(Boolean);
 
-export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
+export const API_URL = import.meta.env.VITE_API_URL ?? "https://rateforge.duckdns.org";
 
 export async function fetchMetrics(url, signal) {
   const response = await fetch(url, { signal });
