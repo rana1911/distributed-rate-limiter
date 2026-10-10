@@ -1,8 +1,8 @@
+
 services:
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -11,49 +11,56 @@ services:
 
   app1:
     build: .
+    restart: unless-stopped
     environment:
-      - REDIS_HOST=redis
-      - PORT=3000
-      - INSTANCE_ID=rate-limiter-1
+      REDIS_HOST: redis
+      PORT: "3000"
+      INSTANCE_ID: rate-limiter-1
+      DASHBOARD_ORIGIN: https://rateforge-dashboard-std17.vercel.app
     expose:
       - "3000"
-    ports:
-      - "3001:3000"
     depends_on:
       redis:
         condition: service_healthy
 
   app2:
     build: .
+    restart: unless-stopped
     environment:
-      - REDIS_HOST=redis
-      - PORT=3000
-      - INSTANCE_ID=rate-limiter-2
+      REDIS_HOST: redis
+      PORT: "3000"
+      INSTANCE_ID: rate-limiter-2
+      DASHBOARD_ORIGIN: https://rateforge-dashboard-std17.vercel.app
     expose:
       - "3000"
-    ports:
-      - "3002:3000"
     depends_on:
       redis:
         condition: service_healthy
 
   nginx:
     image: nginx:alpine
-    ports:
-      - "3000:80"
+    restart: unless-stopped
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - app1
       - app2
 
-  dashboard:
-    build:
-      context: ./dashboard
-    environment:
-      - VITE_API_URL=http://localhost:3000
-      - VITE_METRICS_URLS=http://localhost:3001/metrics,http://localhost:3002/metrics
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
     depends_on:
       - nginx
+
+volumes:
+  caddy_data:
+  caddy_config:
+
